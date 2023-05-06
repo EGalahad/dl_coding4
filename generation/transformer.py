@@ -45,7 +45,35 @@ class LMModel(nn.Module):
         ##############################################################################
         #                  TODO: You need to complete the code here                  #
         ##############################################################################
-        raise NotImplementedError()
+        self.config = Config(
+            vocab_size=len(dictionary),
+            max_position_embeddings=100,
+            n_embed=args.embedding_dim,
+            n_layer=args.num_layers,
+            n_head=8,
+            pad_token_id=self.padding_idx,
+            ffn_dim=2048,
+            static_position_embeddings=True,
+        )
+        # print config
+        print(json.dumps(self.config.__dict__, indent=4))
+        
+        self.embed_tokens = nn.Embedding(
+            num_embeddings=self.config.vocab_size, 
+            embedding_dim=self.config.n_embed, 
+            padding_idx=self.config.pad_token_id
+        )
+
+        self.encoder = TransformerEncoder(self.config, self.embed_tokens)
+        self.fc_head = nn.Linear(self.config.n_embed, self.config.vocab_size)
+
+        # self.encoder_hidden_states = nn.Parameter(torch.zeros(1, 1, self.config.n_embed), requires_grad=False) # (batch_size, seq_len, hidden_size)
+        # self.encoder_padding_mask = None
+
+        attn_mask = fill_with_neg_inf(torch.empty(10000, 10000))
+        mask = torch.tril(torch.ones(10000, 10000), diagonal=0).bool()
+        attn_mask.masked_fill_(mask, 0)
+        self.attn_mask = nn.Parameter(attn_mask, requires_grad=False)
         ##############################################################################
         #                              END OF YOUR CODE                              #
         ##############################################################################
@@ -64,7 +92,10 @@ class LMModel(nn.Module):
         ##############################################################################
         #                  TODO: You need to complete the code here                  #
         ##############################################################################
-        raise NotImplementedError()
+        encoder_padding_mask = make_padding_mask(source, self.padding_idx)
+        attn_mask = self.attn_mask[:source.shape[1], :source.shape[1]]
+        encoder_outputs = self.encoder(source, encoder_padding_mask)
+        logits = self.fc_head(encoder_outputs)
         ##############################################################################
         #                              END OF YOUR CODE                              #
         ##############################################################################
@@ -97,7 +128,62 @@ class LMModel(nn.Module):
         ##############################################################################
         #                  TODO: You need to complete the code here                  #
         ##############################################################################
-        raise NotImplementedError()
+        if beam_size is None:
+            beam_size = 1
+
+        self.eval()
+
+        encoded_prefix = self.dictionary.encode_line(prefix, append_eos=False)
+        encoded_prefix = torch.cat([torch.tensor([self.dictionary.bos()]), encoded_prefix])
+        encoded_prefix = encoded_prefix.to(next(self.parameters()).device).unsqueeze(0)
+        # encoded_prefix: [batch_size=1, seq_len]
+
+        beam_list = [encoded_prefix[0]]
+        log_prob_list = [0]
+        done_list = []
+        done_prob_list = []
+
+        for idx in range(max_len - len(prefix)):
+            if len(beam_list) == 0:
+                break
+            temp_beam_list = []
+            temp_log_prob_list = []
+
+            for beam_idx, beam in enumerate(beam_list):
+                # beam: [seq_len]
+                logits = self.logits(beam.unsqueeze(0))
+                log_probs = F.log_softmax(logits[0, -1, :], dim=-1)
+                # log_probs: [vocab_size]
+                log_probs_topk, word_indices_topk = torch.topk(log_probs, beam_size)
+
+                for new_idx, word_idx in enumerate(word_indices_topk):
+                    if word_idx == self.dictionary.eos():
+                        done_list.append(torch.cat([beam, word_idx.unsqueeze(0)]))
+                        done_prob_list.append(log_probs_topk[new_idx].item() + log_prob_list[beam_idx])
+                        continue
+
+                    temp_beam_list.append(torch.cat([beam, word_idx.unsqueeze(0)]))
+                    temp_log_prob_list.append(log_probs_topk[new_idx] + log_prob_list[beam_idx])
+                
+            if len(temp_log_prob_list) < beam_size:
+                top_log_probs, top_indices = torch.topk(torch.tensor(temp_log_prob_list), len(temp_log_prob_list))
+            else:
+                top_log_probs, top_indices = torch.topk(torch.tensor(temp_log_prob_list), beam_size)
+            
+            beam_list = [temp_beam_list[idx] for idx in top_indices]
+            log_prob_list = [temp_log_prob_list[idx] for idx in top_indices]
+        
+        beam_list.extend(done_list)
+        log_prob_list.extend(done_prob_list)
+
+        best_idx = torch.argmax(torch.tensor(log_prob_list))
+        best_beam = beam_list[best_idx]
+        if best_beam[0] == self.dictionary.bos():
+            best_beam = best_beam[1:]
+        if best_beam[-1] == self.dictionary.eos():
+            best_beam = best_beam[:-1]
+        sentence = [self.dictionary[index] for index in best_beam]
+        return "".join(sentence)
         ##############################################################################
         #                              END OF YOUR CODE                              #
         ##############################################################################
@@ -160,7 +246,72 @@ class Seq2SeqModel(nn.Module):
         ##############################################################################
         #                  TODO: You need to complete the code here                  #
         ##############################################################################
-        raise NotImplementedError()
+        if beam_size is None:
+            beam_size = 1
+
+        self.eval()
+
+        source = self.dictionary.encode_line(inputs, append_eos=False).unsqueeze(0).to(next(self.parameters()).device)
+        encoder_hidden_states = self.endecoder.encoder(source)
+
+        beam_list = [torch.tensor([self.dictionary.bos()]).to(next(self.parameters()).device)]
+        log_prob_list = [0]
+        done_list = []
+        done_prob_list = []
+
+        for idx in range(max_len):
+            if len(beam_list) == 0:
+                break
+            temp_beam_list = []
+            temp_log_prob_list = []
+
+            for beam_idx, beam in enumerate(beam_list):
+                # beam: [seq_len]
+                decoder_input_ids, decoder_padding_mask, causal_mask = _prepare_decoder_inputs(
+                    self.config, source, beam.unsqueeze(0)
+                )
+
+                decoder_outputs = self.endecoder.decoder(
+                    decoder_input_ids,
+                    encoder_hidden_states,
+                    encoder_padding_mask=None,
+                    decoder_padding_mask=decoder_padding_mask,
+                    decoder_causal_mask=causal_mask,
+                )
+
+                logits = self.out_proj(decoder_outputs[:, -1, :])
+                log_probs = F.log_softmax(logits, dim=-1)
+                # log_probs: [vocab_size]
+                log_probs_topk, word_indices_topk = torch.topk(log_probs, beam_size)
+
+                for new_idx, word_idx in enumerate(word_indices_topk):
+                    if word_idx == self.dictionary.eos():
+                        done_list.append(torch.cat([beam, word_idx.unsqueeze(0)]))
+                        done_prob_list.append(log_probs_topk[new_idx].item() + log_prob_list[beam_idx])
+                        continue
+
+                    temp_beam_list.append(torch.cat([beam, word_idx.unsqueeze(0)]))
+                    temp_log_prob_list.append(log_probs_topk[new_idx] + log_prob_list[beam_idx])
+            
+            if len(temp_log_prob_list) < beam_size:
+                top_log_probs, top_indices = torch.topk(torch.tensor(temp_log_prob_list), len(temp_log_prob_list))
+            else:
+                top_log_probs, top_indices = torch.topk(torch.tensor(temp_log_prob_list), beam_size)
+            
+            beam_list = [temp_beam_list[idx] for idx in top_indices]
+            log_prob_list = [temp_log_prob_list[idx] for idx in top_indices]
+        
+        beam_list.extend(done_list)
+        log_prob_list.extend(done_prob_list)
+
+        best_idx = torch.argmax(torch.tensor(log_prob_list))
+        best_beam = beam_list[best_idx]
+        if best_beam[0] == self.dictionary.bos():
+            best_beam = best_beam[1:]
+        if best_beam[-1] == self.dictionary.eos():
+            best_beam = best_beam[:-1]
+        sentence = [self.dictionary[index] for index in best_beam]
+        return "".join(sentence)
         ##############################################################################
         #                              END OF YOUR CODE                              #
         ##############################################################################
@@ -641,7 +792,40 @@ class Attention(nn.Module):
         ##############################################################################
         #                  TODO: You need to complete the code here                  #
         ##############################################################################
-        raise NotImplementedError()
+        if key is None:
+            key = query
+
+        n_query, batch_size, embed_dim = query.shape
+        n_key, _, _ = key.shape
+
+        q, k, v = self.q_proj(query), self.k_proj(key), self.v_proj(key)
+
+        q = self._shape(q, n_query, batch_size)
+        k = self._shape(k, n_key, batch_size)
+        v = self._shape(v, n_key, batch_size)
+        # q: [batch_size * num_heads, n_query, head_dim]
+        # k, v: [batch_size * num_heads, n_key, head_dim]
+
+        attn_scores = torch.bmm(q, k.transpose(1, 2))
+        attn_scores.mul_(self.scaling)
+        # attn_scores: [batch_size * num_heads, n_query, n_key]
+
+        if attn_mask is not None:
+            # attn_mask: [n_query, n_key]
+            attn_scores += attn_mask.unsqueeze(0)
+        if key_padding_mask is not None:
+            # key_padding_mask: [batch_size, n_key]
+            attn_scores = attn_scores.view(batch_size, self.num_heads, n_query, n_key)
+            attn_scores = attn_scores.masked_fill(
+                key_padding_mask.unsqueeze(1).unsqueeze(2), -torch.inf)
+            attn_scores = attn_scores.view(batch_size * self.num_heads, n_query, n_key)
+        attn_probs = F.softmax(attn_scores, dim=-1)
+        attn_probs = F.dropout(attn_probs, p=self.dropout, training=self.training)
+        # attn_probs: [batch_size * num_heads, n_query, n_key]
+        attn_values = torch.bmm(attn_probs, v)
+        # attn_values: [batch_size * num_heads, n_query, head_dim]
+        attn_values = attn_values.transpose(0, 1).contiguous().view(n_query, batch_size, embed_dim)
+        attn_output = self.out_proj(attn_values)
         ##############################################################################
         #                              END OF YOUR CODE                              #
         ##############################################################################
