@@ -94,7 +94,7 @@ class LMModel(nn.Module):
         ##############################################################################
         encoder_padding_mask = make_padding_mask(source, self.padding_idx)
         attn_mask = self.attn_mask[:source.shape[1], :source.shape[1]]
-        encoder_outputs = self.encoder(source, encoder_padding_mask)
+        encoder_outputs = self.encoder(source, encoder_padding_mask, attn_mask)
         logits = self.fc_head(encoder_outputs)
         ##############################################################################
         #                              END OF YOUR CODE                              #
@@ -439,7 +439,7 @@ class EncoderLayer(nn.Module):
         self.fc2 = nn.Linear(config.ffn_dim, self.embed_dim)
         self.final_layer_norm = LayerNorm(self.embed_dim)
 
-    def forward(self, x, encoder_padding_mask):
+    def forward(self, x, encoder_padding_mask, attn_mask=None):
         """
         Args:
             x (Tensor): input to the layer of shape `(seq_len, batch, embed_dim)`
@@ -456,7 +456,8 @@ class EncoderLayer(nn.Module):
             x = self.self_attn_layer_norm(x)
         x = self.self_attn(query=x,
                            key=x,
-                           key_padding_mask=encoder_padding_mask)
+                           key_padding_mask=encoder_padding_mask,
+                           attn_mask=attn_mask)
         x = F.dropout(x, p=self.dropout, training=self.training)
         x = residual + x
         if not self.normalize_before:
@@ -518,7 +519,7 @@ class TransformerEncoder(nn.Module):
         self.layer_norm = LayerNorm(
             config.n_embed) if config.add_final_layer_norm else None
 
-    def forward(self, input_ids, attention_mask=None):
+    def forward(self, input_ids, attention_mask=None, causal_mask=None):
         """
         Args:
             input_ids (LongTensor): tokens in the source language of shape
@@ -544,7 +545,7 @@ class TransformerEncoder(nn.Module):
                                   self.layerdrop):  # skip the layer
                 continue
             else:
-                x = encoder_layer(x, attention_mask)
+                x = encoder_layer(x, attention_mask, causal_mask)
 
         if self.layer_norm:
             x = self.layer_norm(x)
@@ -881,6 +882,7 @@ class SinusoidalPositionalEmbedding(nn.Embedding):
         """Identical to the XLM create_sinusoidal_embeddings except features are not interleaved.
         The cos features are in the 2nd half of the vector. [dim // 2:]
         """
+        out.requires_grad = False
         n_pos, dim = out.shape
         position_enc = np.array(
             [[pos / np.power(10000, 2 * (j // 2) / dim) for j in range(dim)]
@@ -889,7 +891,6 @@ class SinusoidalPositionalEmbedding(nn.Embedding):
             position_enc[:, 0::2]))  # This line breaks for odd n_pos
         out[:, dim // 2:] = torch.FloatTensor(np.cos(position_enc[:, 1::2]))
         out.detach_()
-        out.requires_grad = False
         return out
 
     @torch.no_grad()
