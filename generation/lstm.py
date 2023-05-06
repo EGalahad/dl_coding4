@@ -326,29 +326,29 @@ class Seq2SeqModel(BaseModel):
                 # current_word_embedded: [1, embedding_dim]
 
                 if not self.attention:
-                    inputs = current_word_embedded.unsqueeze(0)
-                    # inputs: [1, 1, embedding_dim]
+                    inputs = current_word_embedded
+                    # inputs: [1, embedding_dim]
                 else:
-                    query = current_hidden[0][-1].unsqueeze(1)
-                    # query: [1, 1, hidden_size]
+                    query = current_hidden[-1].unsqueeze(1)
+                    # query: [num_layers, batch_size=1, hidden_size]
                     key = self.fc_attn_key(encoder_output)
                     # key: [batch_size=1, seq_len, hidden_size]
                     attn_scores = torch.matmul(query, key.transpose(1, 2))
-                    # attn_scores: [1, batch_size=1, seq_len]
+                    # attn_scores: [num_layers, batch_size=1, seq_len]
                     attn_probs = F.softmax(attn_scores, dim=-1)
                     context = torch.matmul(attn_probs, encoder_output)
-                    # context: [1, batch_size=1, hidden_size]
+                    # context: [num_layers, batch_size=1, hidden_size]
 
                     inputs = torch.cat([current_word_embedded, context], dim=-1)
-                    # inputs: [1, 1, embedding_dim+hidden_size]
+                    # inputs: [1, embedding_dim+hidden_size]
 
                 decoder_output, (hidden_state, cell_state) = self.decoder(inputs, current_hidden)
-                # assert decoder_output.shape == (1, 1, self.hidden_size)
+                assert decoder_output.shape == (1, 1, self.hidden_size)
                 # decoder_output: [1, 1, hidden_size]
 
-                logits = self.fc_head(decoder_output.squeeze(1)).squeeze(0)
+                logits = self.fc_head(decoder_output)
 
-                log_probs = F.log_softmax(logits, dim=-1) # log_probs: [vocab_size]
+                log_probs = F.log_softmax(logits, dim=-1) # log_probs: [1, 1, vocab_size]
 
                 log_probs_topk, word_indices_topk = torch.topk(log_probs.squeeze(0), beam_size, dim=-1)
 
@@ -363,13 +363,13 @@ class Seq2SeqModel(BaseModel):
                     temp_log_prob_list.append(log_prob.item() + log_prob_list[beam_idx])
 
             if len(temp_log_prob_list) < beam_size:
-                log_probs_topk, word_indices_topk = torch.topk(torch.tensor(temp_log_prob_list), len(temp_log_prob_list), dim=-1)
+                log_probs_topk, word_indices_topk = torch.topk(temp_log_prob_list, len(temp_log_prob_list), dim=-1)
             else:
-                log_probs_topk, word_indices_topk = torch.topk(torch.tensor(temp_log_prob_list), beam_size, dim=-1)
+                log_probs_topk, word_indices_topk = torch.topk(temp_log_prob_list, beam_size, dim=-1)
             
             beam_list = [temp_beam_list[index] for index in word_indices_topk]
             hidden_list = [temp_hidden_list[index] for index in word_indices_topk]
-            log_prob_list = [temp_log_prob_list[index] for index in word_indices_topk]
+            log_prob_list = log_probs_topk
 
         beam_list.extend(done_list)
         log_prob_list.extend(done_log_prob_list)
