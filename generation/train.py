@@ -11,6 +11,8 @@ import torch.nn.functional as F
 from dataset import LMDataset, Seq2SeqDataset
 from evaluation import evaluate
 
+import wandb
+
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -36,6 +38,8 @@ def train(args):
     os.makedirs(args.save_dir, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    wandb.init(project="generation", config=args)
+
     if args.model_type == "lstm":
         from lstm import LMModel, Seq2SeqModel
     elif args.model_type == "transformer":
@@ -59,6 +63,7 @@ def train(args):
                               shuffle=True)
 
     evaluate(model, valid_set)
+    global_step = 0
     for epoch in range(args.num_epoch):
         model.train()
         with tqdm(train_loader, desc="training") as pbar:
@@ -73,12 +78,16 @@ def train(args):
                 pbar.set_description("Epoch: %d, Loss: %0.8f, lr: %0.6f" %
                                      (epoch + 1, np.mean(losses),
                                       optimizer.param_groups[0]['lr']))
+                global_step += 1
+                wandb.log({"train loss": loss.item(), "lr": optimizer.param_groups[0]['lr']}, step=global_step)
 
         if epoch % args.save_interval == 0:
             torch.save(
                 model,
                 args.save_dir + "/{}_{}.pt".format(args.model_type, epoch + 1))
-        evaluate(model, valid_set)
+        valid_loss, valid_ppl = evaluate(model, valid_set)
+        wandb.log({"valid loss": valid_loss, "valid ppl": valid_ppl}, step=global_step)
+
 
 
 if __name__ == "__main__":

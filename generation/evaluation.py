@@ -32,6 +32,7 @@ def evaluate(model, dataset):
         losses.append(entropy.mean().item())
     print("%s: loss: %.3f, ppl: %.3f" %
           (dataset.split, np.mean(losses), np.mean(ppls)))
+    return np.mean(losses), np.mean(ppls)
 
 
 if __name__ == "__main__":
