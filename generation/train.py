@@ -30,6 +30,7 @@ def get_args():
                         default="transformer",
                         choices=["lstm", "transformer"])
     parser.add_argument("--attention", default=True, action="store_true")
+    parser.add_argument("--wandb", default=False, action="store_true")
     args = parser.parse_args()
     return args
 
@@ -39,7 +40,8 @@ def train(args):
     os.makedirs(args.save_dir, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    wandb.init(project="generation", config=args)
+    if args.wandb:
+        wandb.init(project="generation", config=args)
 
     if args.model_type == "lstm":
         from lstm import LMModel, Seq2SeqModel
@@ -80,14 +82,16 @@ def train(args):
                                      (epoch + 1, np.mean(losses),
                                       optimizer.param_groups[0]['lr']))
                 global_step += 1
-                wandb.log({"train loss": loss.item(), "lr": optimizer.param_groups[0]['lr']}, step=global_step)
+                if args.wandb:
+                    wandb.log({"train loss": loss.item(), "lr": optimizer.param_groups[0]['lr']}, step=global_step)
 
         if epoch % args.save_interval == 0:
             torch.save(
                 model,
                 args.save_dir + "/{}_{}.pt".format(args.model_type, epoch + 1))
         valid_loss, valid_ppl = evaluate(model, valid_set)
-        wandb.log({"valid loss": valid_loss, "valid ppl": valid_ppl}, step=global_step)
+        if args.wandb:
+            wandb.log({"valid loss": valid_loss, "valid ppl": valid_ppl}, step=global_step)
 
 
 
