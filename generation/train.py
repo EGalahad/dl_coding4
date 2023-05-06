@@ -29,6 +29,7 @@ def get_args():
     parser.add_argument("--model-type",
                         default="transformer",
                         choices=["lstm", "transformer"])
+    parser.add_argument("--attention", default=True, action="store_true")
     args = parser.parse_args()
     return args
 
