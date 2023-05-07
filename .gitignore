@@ -3,6 +3,7 @@ Datasets/
 **/*.pth
 
 
+**/wandb
 __pycache__
 
 
