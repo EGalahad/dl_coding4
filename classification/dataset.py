@@ -1,16 +1,20 @@
 from torch.utils.data import Dataset
 import json
 import os
+import sys
 import torch
 
 cur_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(cur_dir, "../"))
 
+from generation.dictionary import Dictionary
 
 class CLSDataset(Dataset):
 
     def __init__(self,
                  data_path=os.path.join(os.path.dirname(cur_dir),
                                         "Datasets/CLS/"),
+                 vocab_file="./vocab.txt",
                  split="train",
                  device="cpu"):
 
@@ -22,6 +26,15 @@ class CLSDataset(Dataset):
         self.padding_idx = None
         self.cls_idx = self.bos_idx = None
         self.sep_idx = self.eos_idx = None
+
+        self.vocab_file = vocab_file
+        try:
+            self.dictionary = Dictionary(extra_special_symbols=["<cls>"])
+            self.dictionary.add_from_file(self.vocab_file)
+        except:
+            self.dictionary = Dictionary(extra_special_symbols=["<cls>"])
+            self._init_vocab()
+        self.vocab_size = len(self.dictionary)
 
         self.cls_map = {"A": 0, "B": 1, "C": 2, "D": 3}
         self.pairs = []
@@ -37,6 +50,21 @@ class CLSDataset(Dataset):
 
     def __len__(self):
         return len(self.pairs)
+
+    def _init_vocab(self):
+        from tqdm import tqdm
+        for article in tqdm(self.data, desc="Initializing vocab"):
+            content = article["Content"] # one long string
+            all_words = content
+            for question in article['Questions']:
+                q = question['Question']
+                choices = question['Choices']
+                all_words += q + "".join(choices)
+            for word in all_words:
+                if word == "\n" or word in ["A", "B", "C", "D"]:
+                    continue
+                self.dictionary.add_symbol(word)
+        self.dictionary.save(self.vocab_file)
 
     # @profile
     def __getitem__(self, index):
@@ -56,7 +84,17 @@ class CLSDataset(Dataset):
         ##############################################################################
         #                  TODO: You need to complete the code here                  #
         ##############################################################################
-        raise NotImplementedError()
+        content, q, choices, label = self.pairs[index]
+        content_id = self.dictionary.encode_line(content, add_if_not_exist=False, append_eos=False)
+        q_id = self.dictionary.encode_line(q, add_if_not_exist=False, append_eos=False)
+        choices_id = [self.dictionary.encode_line(choice, add_if_not_exist=False, append_eos=False) for choice in choices]
+        label = torch.tensor(label, dtype=torch.long)
+        return {
+            "content": content_id,
+            "q": q_id,
+            "choices": choices_id,
+            "label": label
+        }
         ##############################################################################
         #                              END OF YOUR CODE                              #
         ##############################################################################
@@ -79,7 +117,34 @@ class CLSDataset(Dataset):
         ##############################################################################
         #                  TODO: You need to complete the code here                  #
         ##############################################################################
-        raise NotImplementedError()
+        max_content_len = max([len(sample["content"]) for sample in samples])
+        max_q_len = max([len(sample["q"]) for sample in samples])
+        max_choices_len = max([max([len(choice) for choice in sample["choices"]]) for sample in samples])
+        
+        batch_size = len(samples)
+        
+        contents = torch.empty(batch_size, max_content_len, dtype=torch.long, device=self.device)
+        contents.fill_(self.dictionary.pad())
+        
+        qs = torch.empty(batch_size, max_q_len, dtype=torch.long, device=self.device)
+        qs.fill_(self.dictionary.pad())
+        
+        choices = torch.empty(batch_size, 4, max_choices_len, dtype=torch.long, device=self.device)
+        choices.fill_(self.dictionary.pad())
+
+        for batch_idx, sample in enumerate(samples):
+            contents[batch_idx, :len(sample["content"])].copy_(sample["content"])
+            qs[batch_idx, :len(sample["q"])].copy_(sample["q"])
+            for j, choice in enumerate(sample["choices"]):
+                choices[batch_idx, j, :len(choice)].copy_(choice)
+                
+        labels = torch.stack([sample["label"] for sample in samples]).to(self.device)
+        return {
+            "content": contents,
+            "q": qs,
+            "choices": choices,
+            "targets": labels
+        }
         ##############################################################################
         #                              END OF YOUR CODE                              #
         ##############################################################################
