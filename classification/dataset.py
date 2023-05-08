@@ -7,7 +7,7 @@ import torch
 cur_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(cur_dir, "../"))
 
-from generation.dictionary import Dictionary
+from dictionary import Dictionary
 
 class CLSDataset(Dataset):
 
