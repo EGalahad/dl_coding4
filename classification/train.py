@@ -15,11 +15,14 @@ from model import Net
 curdir = os.path.dirname(__file__)
 
 
-def get_args():
+def get_args(args = None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch-size", default=4, type=int)
     parser.add_argument("--lr", default=1e-4, type=float)
     parser.add_argument("--weight-decay", default=1e-3, type=float)
+    parser.add_argument("--hidden-dim", default=512, type=int)
+    parser.add_argument("--embedding-dim", default=512, type=int)
+    parser.add_argument("--num-layers", default=6, type=int)
     parser.add_argument("--num-epoch", default=20, type=int)
     parser.add_argument("--save-interval", default=1, type=int)
     parser.add_argument("--save-dir", default=os.path.join(curdir, "models"))
@@ -32,6 +35,7 @@ def get_args():
         "Number of updates steps to accumualte before performing a backward/update pass."
     )
     args = parser.parse_args()
+    # args = parser.parse_args(args if args else [])
     return args
 
 
@@ -46,13 +50,13 @@ def train(args):
                               shuffle=True)
 
     valid_set = CLSDataset(split="dev", device=device)
-    model = Net(args).to(device)
+    model = Net(args, train_set.dictionary).to(device)
     optimizer = optim.Adam(model.parameters(),
                            lr=args.lr,
                            weight_decay=args.weight_decay)
 
     global_step = 0
-    evaluate(model, valid_set)
+    # evaluate(model, valid_set)
     for epoch in range(args.num_epoch):
         model.train()
         with tqdm(train_loader, desc="training") as pbar:
