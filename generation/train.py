@@ -36,7 +36,7 @@ def get_args():
 
 
 def train(args):
-    args.save_dir += "_" + args.model_type + "_lm" if not args.seq2seq else "_seq2seq"
+    args.save_dir += "_" + args.model_type + ("_lm" if not args.seq2seq else "_seq2seq")
     os.makedirs(args.save_dir, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
