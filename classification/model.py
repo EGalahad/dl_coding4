@@ -19,11 +19,14 @@ class Net(nn.Module):
 
         self.dictionary = dictionary
         self.padding_idx = dictionary.pad()
+        self.cls_idx = dictionary.indices["<cls>"]
+        self.q_idx = dictionary.indices["<q>"]
 
         self.embedding = nn.Embedding(self.n_vocab, self.n_embed)
         self.encoder = nn.LSTM(self.n_embed, self.n_hidden, self.n_layers, batch_first=True)
-        self.fc_attn = nn.Linear(self.n_hidden, self.n_hidden)
-        self.decoder = nn.LSTM(self.n_embed + self.n_hidden, self.n_hidden, self.n_layers, batch_first=True)
+
+        self.adaptive_length = 8
+        self.fc_logits = nn.Linear(self.adaptive_length * self.n_hidden, 4)
         ##############################################################################
         #                              END OF YOUR CODE                              #
         ##############################################################################
@@ -51,52 +54,53 @@ class Net(nn.Module):
 
         batch_size = contents.shape[0]
 
-        contents_embeded = self.embedding(contents)
-        contents_encoded, contents_hidden = self.encoder(contents_embeded)
-        # contents_encoded: [batch_size, max_content_len, n_hidden]
-        contents_pooled = F.adaptive_avg_pool1d(contents_encoded.permute(0, 2, 1), 1).squeeze(2)
-        # or choose the last token in the sequence
-        # contents_pooled = contents_encoded[:, -1, :]
+        contents_embed = self.embedding(contents)
+        # contents_embed: [batch_size, max_content_len, n_embed]
+        q_embed = self.embedding(torch.tensor(self.q_idx, device=next(self.parameters()).device)) # [n_embed]
+        questions_embed = self.embedding(questions)
+        # questions_embed: [batch_size, max_q_len, n_embed]
+        cls_embed = self.embedding(torch.tensor(self.cls_idx, device=next(self.parameters()).device)) # [n_embed]
+        choices_embed = self.embedding(choices)
+        # choices_embed: [batch_size, 4, max_choices_len, n_embed]
 
-        questions_embeded = self.embedding(questions)
-        questions_encoded, _ = self.lstm_with_attention(
-            contents_encoded,
-            contents_hidden,
-            questions_embeded
-        )
-        # questions_encoded: [batch_size, max_q_len, n_hidden]
-        questions_pooled = F.adaptive_avg_pool1d(questions_encoded.permute(0, 2, 1), 1).squeeze(2)
-        # or choose the last token in the sequence
-        # questions_pooled = questions_encoded[:, -1, :]
+        # inputs: [batch_size, max_content_len + <q> + max_q_len + (<cls> + max_choices_len) * 4, n_embed]
+        # print("contents_embed shape: ", contents_embed.shape)
+        # print("q_embed shape: ", q_embed.repeat(batch_size, 1, 1).shape)
+        # print("questions_embed shape: ", questions_embed.shape)
+        # print("cls_embed shape: ", cls_embed.repeat(batch_size, 1, 1).shape)
+        # print("choices_embed[:, 0] shape: ", choices_embed[:, 0].shape)
+        # print("choices_embed[:, 1] shape: ", choices_embed[:, 1].shape)
+        inputs = torch.cat([
+            contents_embed,
+            q_embed.repeat(batch_size, 1, 1),
+            questions_embed,
+            cls_embed.repeat(batch_size, 1, 1),
+            choices_embed[:, 0],
+            cls_embed.repeat(batch_size, 1, 1),
+            choices_embed[:, 1],
+            cls_embed.repeat(batch_size, 1, 1),
+            choices_embed[:, 2],
+            cls_embed.repeat(batch_size, 1, 1),
+            choices_embed[:, 3],
+        ], dim=1)
+        # print("inputs.shape: ", inputs.shape)
 
-        choices_embeded = self.embedding(choices)
-        # choices_embeded: [batch_size, 4, max_choices_len, n_embed]
-        choices_encoded = []
-        for i in range(4):
-            choice_encoded, _ = self.lstm_with_attention(
-                contents_encoded,
-                contents_hidden,
-                choices_embeded[:, i]
-            )
-            choices_encoded.append(choice_encoded)
-        choices_encoded = torch.stack(choices_encoded, dim=1)
-        # choices_encoded: [batch_size, 4, max_choices_len, n_hidden]
-        choices_pooled = torch.cat([F.adaptive_avg_pool1d(choice.squeeze(1).transpose(-2, -1), 1).squeeze(-1).unsqueeze(1) for choice in choices_encoded.split(1, dim=1)], dim=1)
-        # choice: [batch_size, 1, max_choices_len, n_hidden]
-        # or choose the last token in the sequence
-        # choices_pooled = choices_encoded[:, :, -1, :]
-        # choices_pooled: [batch_size, 4, n_hidden]
+        outputs, (hidden_state, cell_state) = self.encoder(inputs)
+        # outputs: [batch_size, max_content_len + <q> + max_q_len + (<cls> + max_choices_len) * 4, n_hidden]
+        outputs_pooled = F.adaptive_avg_pool1d(outputs.transpose(1, 2), self.adaptive_length)
+        # outputs_pooled: [batch_size, n_hidden * self.adaptive_length]
+        # print("outputs_pooled.shape: ", outputs_pooled.shape)
+        # print("batch_size: ", batch_size)
+        outputs_pooled = outputs_pooled.view(batch_size, -1)
+        # print("outputs_pooled.shape: ", outputs_pooled.shape)
+        # print("self.fc_logits.weight.shape: ", self.fc_logits.weight.shape)
+        logits = self.fc_logits(outputs_pooled)
+        # logits: [batch_size, 4]
 
-        logits = torch.empty(batch_size, 4, dtype=torch.float, device=contents.device)
-        for i in range(4):
-            # print("contents_pool", contents_pooled.shape)
-            # print("questions_pool", questions_pooled.shape)
-            # print("choices_pool", choices_pooled[:, i].shape)
-            logits[:, i] = torch.sum(contents_pooled * questions_pooled, dim=1) + torch.sum(contents_pooled * choices_pooled[:, i], dim=1)
-        
-        invalid_choice_mask = (choices == self.padding_idx).all(dim=-1)
-        # invalid_choice_mask: [batch_size, 4]
-        logits.masked_fill_(invalid_choice_mask, -torch.inf)
+        invalid_choices_mask = (choices == self.padding_idx).all(dim=-1)
+        # invalid_choices_mask: [batch_size, 4]
+
+        logits.masked_fill_(invalid_choices_mask, -torch.inf)
 
         return logits
         ##############################################################################
