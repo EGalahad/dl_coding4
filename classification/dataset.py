@@ -9,8 +9,8 @@ from dictionary import Dictionary
 class CLSDataset(Dataset):
 
     def __init__(self,
-                 data_path=os.path.join(os.path.dirname(cur_dir),
-                                        "Datasets/CLS/"),
+                 data_path=os.path.join(os.path.dirname(__file__),
+                                        "../Datasets/CLS/"),
                  vocab_file="./vocab.txt",
                  split="train",
                  device="cpu"):

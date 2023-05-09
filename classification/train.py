@@ -37,8 +37,10 @@ def get_args(args = None):
         help=
         "Number of updates steps to accumualte before performing a backward/update pass."
     )
-    args = parser.parse_args()
-    # args = parser.parse_args(args if args else [])
+    if args is not None:
+        args = parser.parse_args(args)
+    else:
+        args = parser.parse_args()
     return args
 
 
