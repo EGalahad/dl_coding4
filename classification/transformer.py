@@ -67,6 +67,13 @@ class LMModel(nn.Module):
         self.encoder = TransformerEncoder(self.config, self.embed_tokens)
         self.fc_head = nn.Linear(self.config.n_embed, self.config.vocab_size)
 
+        # self.encoder_hidden_states = nn.Parameter(torch.zeros(1, 1, self.config.n_embed), requires_grad=False) # (batch_size, seq_len, hidden_size)
+        # self.encoder_padding_mask = None
+
+        attn_mask = fill_with_neg_inf(torch.empty(10000, 10000))
+        mask = torch.tril(torch.ones(10000, 10000), diagonal=0).bool()
+        attn_mask.masked_fill_(mask, 0)
+        self.attn_mask = nn.Parameter(attn_mask, requires_grad=False)
         ##############################################################################
         #                              END OF YOUR CODE                              #
         ##############################################################################
@@ -86,7 +93,7 @@ class LMModel(nn.Module):
         #                  TODO: You need to complete the code here                  #
         ##############################################################################
         encoder_padding_mask = make_padding_mask(source, self.padding_idx)
-        attn_mask = torch.full((source.shape[1], source.shape[1]), float("-inf"), device=source.device, dtype=torch.float32).triu_(1)
+        attn_mask = self.attn_mask[:source.shape[1], :source.shape[1]]
         encoder_outputs = self.encoder(source, encoder_padding_mask, attn_mask)
         logits = self.fc_head(encoder_outputs)
         ##############################################################################
@@ -242,7 +249,6 @@ class Seq2SeqModel(nn.Module):
         if beam_size is None:
             beam_size = 1
 
-        max_len = min(len(inputs), max_len)
         self.eval()
 
         source = self.dictionary.encode_line(inputs, append_eos=False).unsqueeze(0).to(next(self.parameters()).device)
@@ -273,7 +279,7 @@ class Seq2SeqModel(nn.Module):
                     decoder_causal_mask=causal_mask,
                 )
 
-                logits = self.out_proj(decoder_outputs[:, -1, :]).squeeze(0)
+                logits = self.out_proj(decoder_outputs[:, -1, :])
                 log_probs = F.log_softmax(logits, dim=-1)
                 # log_probs: [vocab_size]
                 log_probs_topk, word_indices_topk = torch.topk(log_probs, beam_size)
@@ -811,6 +817,10 @@ class Attention(nn.Module):
         if key_padding_mask is not None:
             # key_padding_mask: [batch_size, n_key]
             attn_scores = attn_scores.view(batch_size, self.num_heads, n_query, n_key)
+            # # check memory usage of attention scores
+            # print(attn_scores.shape)
+            # print("memory usage of attention scores: ", attn_scores.element_size() * attn_scores.nelement() / 1024 / 1024, "MB")
+            # print("total memory usage: ", torch.cuda.memory_allocated() / 1024 / 1024, "MB")
             attn_scores = attn_scores.masked_fill(
                 key_padding_mask.unsqueeze(1).unsqueeze(2), -torch.inf)
             attn_scores = attn_scores.view(batch_size * self.num_heads, n_query, n_key)

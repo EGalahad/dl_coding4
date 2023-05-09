@@ -136,8 +136,10 @@ class LMModel(BaseModel):
                         done_log_prob_list.append(log_prob.item() + log_prob_list[beam_idx])
                         continue
                     
-                    embedded_word = self.embedding(word_idx.unsqueeze(0).to(next(self.parameters()).device)) # embedded_word: [1, embedding_dim]
-                    next_output, (next_h, next_c) = self.lstm(embedded_word, current_hidden) # next_output: [1, 1, hidden_size]
+                    embedded_word = self.embedding(word_idx.unsqueeze(0).to(next(self.parameters()).device)).unsqueeze(0) # embedded_word: [1, 1, embedding_dim]
+                    next_output, (next_h, next_c) = self.lstm(embedded_word, current_hidden) 
+                    # next_output: [bach_size=1, seq_len=1, hidden_size]
+                    # next_h, next_c: [num_layers, batch_size=1, hidden_size]
 
                     temp_beam_list.append(beam + [word_idx.item()])
                     temp_hidden_list.append((next_h, next_c))
@@ -145,13 +147,13 @@ class LMModel(BaseModel):
                     temp_output_list.append(next_output[0, -1, :])
             
             if len(temp_log_prob_list) < beam_size:
-                log_probs_topk, word_indices_topk = torch.topk(temp_log_prob_list, len(temp_log_prob_list), dim=-1)
+                log_probs_topk, word_indices_topk = torch.topk(torch.tensor(temp_log_prob_list), len(temp_log_prob_list), dim=-1)
             else:
-                log_probs_topk, word_indices_topk = torch.topk(temp_log_prob_list, beam_size, dim=-1)
+                log_probs_topk, word_indices_topk = torch.topk(torch.tensor(temp_log_prob_list), beam_size, dim=-1)
             
             beam_list = [temp_beam_list[index] for index in word_indices_topk]
             hidden_list = [temp_hidden_list[index] for index in word_indices_topk]
-            log_prob_list = log_probs_topk
+            log_prob_list = [temp_log_prob_list[index] for index in word_indices_topk]
             output_list = [temp_output_list[index] for index in word_indices_topk]
         
         # replace log prob with mean 

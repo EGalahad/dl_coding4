@@ -14,7 +14,7 @@ from evaluation import evaluate
 import wandb
 
 
-def get_args():
+def get_args(args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--embedding-dim", default=512, type=int)
     parser.add_argument("--hidden-size", default=512, type=int)
@@ -31,7 +31,10 @@ def get_args():
                         choices=["lstm", "transformer"])
     parser.add_argument("--attention", default=True, action="store_true")
     parser.add_argument("--wandb", default=False, action="store_true")
-    args = parser.parse_args()
+    if args is not None:
+        args = parser.parse_args(args)
+    else:
+        args = parser.parse_args()
     return args
 
 
@@ -60,6 +63,11 @@ def train(args):
     optimizer = optim.Adam(model.parameters(),
                            lr=args.lr,
                            weight_decay=args.weight_decay)
+
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer,
+                                                        args.num_epoch,
+                                                        eta_min=1e-4)
+                                                     
     train_loader = DataLoader(train_set,
                               batch_size=args.batch_size,
                               collate_fn=train_set.collate_fn,
@@ -85,6 +93,7 @@ def train(args):
                 if args.wandb:
                     wandb.log({"train loss": loss.item(), "lr": optimizer.param_groups[0]['lr']}, step=global_step)
 
+        scheduler.step()
         if epoch % args.save_interval == 0:
             torch.save(
                 model,

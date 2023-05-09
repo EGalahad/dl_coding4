@@ -12,7 +12,7 @@ from model import *
 @torch.no_grad()
 def evaluate(model, dataset):
     model.eval()
-    batch_size = 64
+    batch_size = 16
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
                             collate_fn=dataset.collate_fn)
@@ -23,6 +23,7 @@ def evaluate(model, dataset):
         targets = samples.pop("targets")
 
         logits = model.logits(**samples)
+        # print(torch.cuda.memory_allocated() / 1024 / 1024 / 1024, "GB")
         predict_label = logits.argmax(dim=-1)
         hit += (predict_label == targets).sum()
         losses.append(F.cross_entropy(logits, targets).item())
