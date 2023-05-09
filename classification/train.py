@@ -8,6 +8,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import wandb
+
 from dataset import CLSDataset
 from evaluation import evaluate
 from model import Net
@@ -27,6 +29,7 @@ def get_args(args = None):
     parser.add_argument("--save-interval", default=1, type=int)
     parser.add_argument("--save-dir", default=os.path.join(curdir, "models"))
     parser.add_argument("--total-updates", default=50000, type=int)
+    parser.add_argument("--wandb", default=False, action="store_true")
     parser.add_argument(
         '--gradient-accumulation-steps',
         type=int,
@@ -43,6 +46,9 @@ def train(args):
     os.makedirs(args.save_dir, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    if args.wandb:
+        wandb.init(project="classification", config=args)
+
     train_set = CLSDataset(device=device)
     train_loader = DataLoader(train_set,
                               batch_size=args.batch_size,
@@ -56,7 +62,7 @@ def train(args):
                            weight_decay=args.weight_decay)
 
     global_step = 0
-    # evaluate(model, valid_set)
+    evaluate(model, valid_set)
     for epoch in range(args.num_epoch):
         model.train()
         with tqdm(train_loader, desc="training") as pbar:
@@ -76,11 +82,20 @@ def train(args):
                      optimizer.param_groups[0]['lr'], global_step))
                 if optimizer.param_groups[0]['lr'] == 0:
                     break
+                if args.wandb:
+                    wandb.log({"train loss": np.mean(losses),
+                               "lr": optimizer.param_groups[0]['lr'],
+                               }, step=global_step)
         if epoch % args.save_interval == 0:
             torch.save(model, args.save_dir + "/ckpt_{}.pt".format(epoch + 1))
         if optimizer.param_groups[0]['lr'] == 0:
             break
-        evaluate(model, valid_set)
+        valid_loss, valid_acc = evaluate(model, valid_set)
+        if args.wandb:
+            wandb.log({"valid loss": valid_loss,
+                       "valid acc": valid_acc,
+                       }, step=global_step)
+
 
 
 if __name__ == "__main__":

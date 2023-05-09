@@ -29,6 +29,7 @@ def evaluate(model, dataset):
         losses.append(F.cross_entropy(logits, targets).item())
     print("%s: loss: %.3f, acc: %.3f" %
           (dataset.split, np.mean(losses), hit / len(dataset)))
+    return np.mean(losses), hit / len(dataset)
 
 
 if __name__ == "__main__":
