@@ -58,7 +58,7 @@ def train(args):
                               shuffle=True)
 
     valid_set = CLSDataset(split="dev", device=device)
-    model = Net(args, train_set.dictionary).to(device)
+    model = Net(args).to(device)
     optimizer = optim.Adam(model.parameters(),
                            lr=args.lr,
                            weight_decay=args.weight_decay)

@@ -29,7 +29,7 @@ def get_args(args=None):
     parser.add_argument("--model-type",
                         default="transformer",
                         choices=["lstm", "transformer"])
-    parser.add_argument("--attention", default=True, action="store_true")
+    parser.add_argument("--attention", default=False, type=bool)
     parser.add_argument("--wandb", default=False, action="store_true")
     if args is not None:
         args = parser.parse_args(args)
@@ -42,6 +42,7 @@ def train(args):
     args.save_dir += "_" + args.model_type + ("_lm" if not args.seq2seq else "_seq2seq")
     os.makedirs(args.save_dir, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    args.attention = False
 
     if args.wandb:
         wandb.init(project="generation", config=args)
@@ -93,7 +94,7 @@ def train(args):
                 if args.wandb:
                     wandb.log({"train loss": loss.item(), "lr": optimizer.param_groups[0]['lr']}, step=global_step)
 
-        scheduler.step()
+        # scheduler.step()
         if epoch % args.save_interval == 0:
             torch.save(
                 model,

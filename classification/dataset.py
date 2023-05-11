@@ -6,12 +6,20 @@ import torch
 
 from dictionary import Dictionary
 
+from transformers import AutoTokenizer
+
+# the model wants batch to be
+# batch["input_ids"]: [batch_size, 4, [SEP] content [SEP] question [SEP] choice [SEP]]
+# batch["labels"]: [batch_size]
+# batch["token_type_ids"]: [batch_size, 4, ...]
+# batch["attention_mask"]: [batch_size, 4, ...]
+
 class CLSDataset(Dataset):
 
     def __init__(self,
+                 model_name = "bert-base-chinese",
                  data_path=os.path.join(os.path.dirname(__file__),
                                         "../Datasets/CLS/"),
-                 vocab_file="./vocab.txt",
                  split="train",
                  device="cpu"):
 
@@ -19,19 +27,8 @@ class CLSDataset(Dataset):
 
         with open(self.filename, encoding="utf-8") as f:
             self.data = json.load(f)
-
-        self.padding_idx = None
-        self.cls_idx = self.bos_idx = None
-        self.sep_idx = self.eos_idx = None
-
-        self.vocab_file = vocab_file
-        try:
-            self.dictionary = Dictionary(extra_special_symbols=["<q>", "<cls>"])
-            self.dictionary.add_from_file(self.vocab_file)
-        except:
-            self.dictionary = Dictionary(extra_special_symbols=["<q>", "<cls>"])
-            self._init_vocab()
-        self.vocab_size = len(self.dictionary)
+        
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
         self.cls_map = {"A": 0, "B": 1, "C": 2, "D": 3}
         self.pairs = []
@@ -45,26 +42,10 @@ class CLSDataset(Dataset):
         self.device = device
         self.split = split
 
+        self.num_choices = 4
+
     def __len__(self):
         return len(self.pairs)
-
-    def _init_vocab(self):
-        from tqdm import tqdm
-        for article in tqdm(self.data, desc="Initializing vocab"):
-            content = article["Content"] # one long string
-            all_words = content
-            for question in article['Questions']:
-                q = question['Question']
-                choices = question['Choices']
-                all_words += q + "".join(choices)
-            for word in all_words:
-                if word == ["<", "q", "c", "l", "s", ">"]:
-                    print(word, "escaped")
-                    continue
-                if word in ["A", "B", "C", "D"]:
-                    continue
-                self.dictionary.add_symbol(word)
-        self.dictionary.save(self.vocab_file)
 
     # @profile
     def __getitem__(self, index):
@@ -85,14 +66,14 @@ class CLSDataset(Dataset):
         #                  TODO: You need to complete the code here                  #
         ##############################################################################
         content, q, choices, label = self.pairs[index]
-        content_id = self.dictionary.encode_line(content, add_if_not_exist=False, append_eos=False)
-        q_id = self.dictionary.encode_line(q, add_if_not_exist=False, append_eos=False)
-        choices_id = [self.dictionary.encode_line(choice, add_if_not_exist=False, append_eos=False) for choice in choices]
+        for _ in range(self.num_choices - len(choices)):
+            choices.append("")
+
         label = torch.tensor(label, dtype=torch.long)
         return {
-            "content": content_id,
-            "q": q_id,
-            "choices": choices_id,
+            "content": content,
+            "q": q,
+            "choices": choices,
             "label": label
         }
         ##############################################################################
@@ -117,34 +98,36 @@ class CLSDataset(Dataset):
         ##############################################################################
         #                  TODO: You need to complete the code here                  #
         ##############################################################################
-        max_content_len = max([len(sample["content"]) for sample in samples])
-        max_q_len = max([len(sample["q"]) for sample in samples])
-        max_choices_len = max([max([len(choice) for choice in sample["choices"]]) for sample in samples])
-        
-        batch_size = len(samples)
-        
-        contents = torch.empty(batch_size, max_content_len, dtype=torch.long, device=self.device)
-        contents.fill_(self.dictionary.pad())
-        
-        qs = torch.empty(batch_size, max_q_len, dtype=torch.long, device=self.device)
-        qs.fill_(self.dictionary.pad())
-        
-        choices = torch.empty(batch_size, 4, max_choices_len, dtype=torch.long, device=self.device)
-        choices.fill_(self.dictionary.pad())
+        contents = [sample["content"] for sample in samples]
+        questions = [sample["q"] for sample in samples]
+        choices = [sample["choices"] for sample in samples]
 
-        for batch_idx, sample in enumerate(samples):
-            contents[batch_idx, :len(sample["content"])].copy_(sample["content"])
-            qs[batch_idx, :len(sample["q"])].copy_(sample["q"])
-            for j, choice in enumerate(sample["choices"]):
-                choices[batch_idx, j, :len(choice)].copy_(choice)
-                
-        labels = torch.stack([sample["label"] for sample in samples]).to(self.device)
-        return {
-            "content": contents,
-            "q": qs,
-            "choices": choices,
-            "targets": labels
-        }
+        batch_size = len(samples)
+        num_choices = self.num_choices
+
+        flattened_samples = [
+            [
+                contents[i] + '[SEP]' + questions[i] + '[SEP]' + choices[i][j]
+                for j in range(num_choices)
+            ]
+            for i in range(batch_size)
+        ]
+        flattened_samples = sum(flattened_samples, [])
+
+        batch = self.tokenizer(flattened_samples, 
+                               padding=True,
+                               truncation=True,
+                               max_length=5120,
+                               return_tensors="pt")
+        # batch["input_ids"]: [batch_size * num_choices, max_len]
+        # batch["attention_mask"]: [batch_size * num_choices, max_len]
+        # batch["token_type_ids"]: [batch_size * num_choices, max_len]
+
+        batch = {k: v.view(batch_size, num_choices, -1) for k, v in batch.items()}
+        batch["targets"] = torch.tensor([sample["label"] for sample in samples], dtype=torch.long)
+        # batch["targets"]: [batch_size]
+        batch = {k: v.to(self.device) for k, v in batch.items()}
+        return batch
         ##############################################################################
         #                              END OF YOUR CODE                              #
         ##############################################################################

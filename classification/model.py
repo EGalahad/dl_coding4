@@ -4,26 +4,25 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
+from transformers import AutoModel, AutoTokenizer
 class Net(nn.Module):
 
-    def __init__(self, args, dictionary):
+    def __init__(self, args, model_name="bert-base-chinese", max_len=5120):
         super().__init__()
         ##############################################################################
         #                  TODO: You need to complete the code here                  #
         ##############################################################################
-        self.n_embed = args.embedding_dim
-        self.n_hidden = args.hidden_dim
-        self.n_layers = args.num_layers
-        self.n_vocab = len(dictionary)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModel.from_pretrained(model_name)
 
-        self.dictionary = dictionary
-        self.padding_idx = dictionary.pad()
+        # adapt the model to longer input
+        self.model.embeddings.position_embeddings = nn.Embedding(max_len, self.model.embeddings.position_embeddings.embedding_dim)
+        self.model.embeddings.register_buffer("position_ids", torch.arange(max_len, dtype=torch.long).unsqueeze(0))
+        self.model.embeddings.register_buffer("token_type_ids", torch.zeros(1, max_len, dtype=torch.long))
 
-        self.embedding = nn.Embedding(self.n_vocab, self.n_embed)
-        self.encoder = nn.LSTM(self.n_embed, self.n_hidden, self.n_layers, batch_first=True)
-        self.fc_attn = nn.Linear(self.n_hidden, self.n_hidden)
-        self.decoder = nn.LSTM(self.n_embed + self.n_hidden, self.n_hidden, self.n_layers, batch_first=True)
+        self.dropout = nn.Dropout(self.model.config.hidden_dropout_prob)
+
+        self.fc_logits = nn.Linear(self.model.config.hidden_size, 1)
         ##############################################################################
         #                              END OF YOUR CODE                              #
         ##############################################################################
@@ -42,97 +41,18 @@ class Net(nn.Module):
         # ##############################################################################
         #                  TODO: You need to complete the code here                  #
         ##############################################################################
-        contents = kwargs["content"]
-        # contents: [batch_size, max_content_len]
-        questions = kwargs["q"]
-        # questions: [batch_size, max_q_len]
-        choices = kwargs["choices"]
-        # choices: [batch_size, 4, max_choices_len]
-
-        batch_size = contents.shape[0]
-
-        contents_embeded = self.embedding(contents)
-        contents_encoded, contents_hidden = self.encoder(contents_embeded)
-        # contents_encoded: [batch_size, max_content_len, n_hidden]
-        contents_pooled = F.adaptive_avg_pool1d(contents_encoded.permute(0, 2, 1), 1).squeeze(2)
-        # or choose the last token in the sequence
-        # contents_pooled = contents_encoded[:, -1, :]
-
-        questions_embeded = self.embedding(questions)
-        questions_encoded, _ = self.lstm_with_attention(
-            contents_encoded,
-            contents_hidden,
-            questions_embeded
-        )
-        # questions_encoded: [batch_size, max_q_len, n_hidden]
-        questions_pooled = F.adaptive_avg_pool1d(questions_encoded.permute(0, 2, 1), 1).squeeze(2)
-        # or choose the last token in the sequence
-        # questions_pooled = questions_encoded[:, -1, :]
-
-        choices_embeded = self.embedding(choices)
-        # choices_embeded: [batch_size, 4, max_choices_len, n_embed]
-        choices_encoded = []
-        for i in range(4):
-            choice_encoded, _ = self.lstm_with_attention(
-                contents_encoded,
-                contents_hidden,
-                choices_embeded[:, i]
-            )
-            choices_encoded.append(choice_encoded)
-        choices_encoded = torch.stack(choices_encoded, dim=1)
-        # choices_encoded: [batch_size, 4, max_choices_len, n_hidden]
-        choices_pooled = torch.cat([F.adaptive_avg_pool1d(choice.squeeze(1).transpose(-2, -1), 1).squeeze(-1).unsqueeze(1) for choice in choices_encoded.split(1, dim=1)], dim=1)
-        # choice: [batch_size, 1, max_choices_len, n_hidden]
-        # or choose the last token in the sequence
-        # choices_pooled = choices_encoded[:, :, -1, :]
-        # choices_pooled: [batch_size, 4, n_hidden]
-
-        logits = torch.empty(batch_size, 4, dtype=torch.float, device=contents.device)
-        for i in range(4):
-            # print("contents_pool", contents_pooled.shape)
-            # print("questions_pool", questions_pooled.shape)
-            # print("choices_pool", choices_pooled[:, i].shape)
-            logits[:, i] = torch.sum(contents_pooled * questions_pooled, dim=1) + torch.sum(contents_pooled * choices_pooled[:, i], dim=1)
-        
-        invalid_choice_mask = (choices == self.padding_idx).all(dim=-1)
-        # invalid_choice_mask: [batch_size, 4]
-        logits.masked_fill_(invalid_choice_mask, -torch.inf)
-
+        batch_size = kwargs["input_ids"].shape[0]
+        num_choices = kwargs["input_ids"].shape[1]
+        kwargs = {k: v.view(batch_size * num_choices, -1) for k, v in kwargs.items()}
+        pooler_output = self.model(**kwargs)[1]
+        pooler_output = self.dropout(pooler_output)
+        # pooler_output: [batch_size * num_choices, hidden_size]
+        logits = self.fc_logits(pooler_output).view(batch_size, num_choices)
         return logits
         ##############################################################################
         #                              END OF YOUR CODE                              #
         ##############################################################################
     
-    def lstm_with_attention(
-            self,
-            encoder_outputs, # [batch_size, max_content_len, n_hidden]
-            encoder_hidden, # ([n_layers, batch_size, n_hidden]) * 2
-            decoder_input, # [batch_size, seq_len, n_embed]
-    ):
-        hidden_state, cell_state = encoder_hidden
-        decoder_outputs = []
-        for i in range(decoder_input.shape[1]):
-            query = hidden_state[-1].unsqueeze(1)
-            # query: [batch_size, 1, n_hidden]
-            key = self.fc_attn(encoder_outputs)
-            # key: [batch_size, max_content_len, n_hidden]
-            attn_scores = torch.bmm(query, key.transpose(1, 2))
-            attn_probs = F.softmax(attn_scores, dim=-1)
-            # attn_probs: [batch_size, 1, max_content_len]
-            context = torch.bmm(attn_probs, encoder_outputs)
-            # context: [batch_size, 1, n_hidden]
-
-            # print("context.shape: ", context.shape)
-            # print("decoder_input[:, i, :].unsqueeze(1).shape: ", decoder_input[:, i, :].unsqueeze(1).shape)
-            inputs = torch.cat([decoder_input[:, i, :].unsqueeze(1), context], dim=-1)
-            # inputs: [batch_size, 1, n_embed + n_hidden]
-            outputs, (hidden_state, cell_state) = self.decoder(inputs, (hidden_state, cell_state))
-
-            decoder_outputs.append(outputs)
-        decoder_outputs = torch.cat(decoder_outputs, dim=1)
-        # decoder_outputs: [batch_size, seq_len, n_hidden]
-        return decoder_outputs, (hidden_state, cell_state)
-
     def get_loss(self, **kwargs):
         """
         Compute the loss for the input data and target labels.
@@ -149,6 +69,7 @@ class Net(nn.Module):
         #                  TODO: You need to complete the code here                  #
         ##############################################################################
         targets = kwargs.pop("targets")
+        # targets: [batch_size]
         logits = self.logits(**kwargs)
         return F.cross_entropy(logits, targets)
         ##############################################################################
