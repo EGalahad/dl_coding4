@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer
 class Net(nn.Module):
 
-    def __init__(self, args, model_name="bert-base-chinese", max_len=5120):
+    def __init__(self, args, model_name="bert-base-chinese", max_len=512):
         super().__init__()
         ##############################################################################
         #                  TODO: You need to complete the code here                  #

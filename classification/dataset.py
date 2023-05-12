@@ -17,6 +17,7 @@ from transformers import AutoTokenizer
 class CLSDataset(Dataset):
 
     def __init__(self,
+                 max_len=512,
                  model_name = "bert-base-chinese",
                  data_path=os.path.join(os.path.dirname(__file__),
                                         "../Datasets/CLS/"),
@@ -43,6 +44,7 @@ class CLSDataset(Dataset):
         self.split = split
 
         self.num_choices = 4
+        self.max_len = max_len
 
     def __len__(self):
         return len(self.pairs)
@@ -105,19 +107,18 @@ class CLSDataset(Dataset):
         batch_size = len(samples)
         num_choices = self.num_choices
 
-        flattened_samples = [
-            [
-                contents[i] + '[SEP]' + questions[i] + '[SEP]' + choices[i][j]
-                for j in range(num_choices)
-            ]
-            for i in range(batch_size)
-        ]
-        flattened_samples = sum(flattened_samples, [])
+        first_sentences = [[content] * num_choices for content in contents]
+        second_sentences = [[question + '[SEP]' + choice for choice in choices[i]] for i, question in enumerate(questions)]
 
-        batch = self.tokenizer(flattened_samples, 
-                               padding=True,
-                               truncation=True,
-                               max_length=5120,
+        first_sentences = sum(first_sentences, [])
+        second_sentences = sum(second_sentences, [])
+        # first_sentences, second_sentences: [batch_size * num_choices]
+
+        batch = self.tokenizer(first_sentences,
+                               second_sentences,
+                               max_length=self.max_len,
+                               truncation='only_first',
+                               padding='max_length',
                                return_tensors="pt")
         # batch["input_ids"]: [batch_size * num_choices, max_len]
         # batch["attention_mask"]: [batch_size * num_choices, max_len]

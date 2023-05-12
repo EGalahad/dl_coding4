@@ -22,9 +22,10 @@ def get_args(args = None):
     parser.add_argument("--batch-size", default=4, type=int)
     parser.add_argument("--lr", default=1e-4, type=float)
     parser.add_argument("--weight-decay", default=1e-3, type=float)
-    parser.add_argument("--hidden-dim", default=512, type=int)
-    parser.add_argument("--embedding-dim", default=512, type=int)
-    parser.add_argument("--num-layers", default=6, type=int)
+    parser.add_argument("--max-len", default=512, type=int)
+    # parser.add_argument("--hidden-dim", default=512, type=int)
+    # parser.add_argument("--embedding-dim", default=512, type=int)
+    # parser.add_argument("--num-layers", default=6, type=int)
     parser.add_argument("--num-epoch", default=20, type=int)
     parser.add_argument("--save-interval", default=1, type=int)
     parser.add_argument("--save-dir", default=os.path.join(curdir, "models"))
@@ -57,14 +58,14 @@ def train(args):
                               collate_fn=train_set.collate_fn,
                               shuffle=True)
 
-    valid_set = CLSDataset(split="dev", device=device)
-    model = Net(args).to(device)
+    valid_set = CLSDataset(split="dev", device=device, max_len=args.max_len)
+    model = Net(args, max_len=args.max_len).to(device)
     optimizer = optim.Adam(model.parameters(),
                            lr=args.lr,
                            weight_decay=args.weight_decay)
 
     global_step = 0
-    evaluate(model, valid_set)
+    # evaluate(model, valid_set)
     for epoch in range(args.num_epoch):
         model.train()
         with tqdm(train_loader, desc="training") as pbar:
