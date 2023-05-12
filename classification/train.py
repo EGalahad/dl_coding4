@@ -27,6 +27,7 @@ def get_args(args = None):
     # parser.add_argument("--embedding-dim", default=512, type=int)
     # parser.add_argument("--num-layers", default=6, type=int)
     parser.add_argument("--model-name", default="bert-base-chinese", type=str)
+    parser.add_argument("--last-layers", default=3, type=int)
     parser.add_argument("--num-epoch", default=20, type=int)
     parser.add_argument("--save-interval", default=1, type=int)
     parser.add_argument("--save-dir", default=os.path.join(curdir, "models"))
@@ -46,9 +47,27 @@ def get_args(args = None):
     return args
 
 
+def train_embeddings(net: Net):
+    for param in net.model.parameters():
+        param.requires_grad = False
+    for param in net.model.embeddings.parameters():
+        param.requires_grad = True
+
+def train_last_n_layers(net: Net, n: int):
+    for param in net.model.parameters():
+        param.requires_grad = False
+    for layer in net.model.encoder.layer[-n:]:
+        for param in layer.parameters():
+            param.requires_grad = True
+    for param in net.model.pooler.parameters():
+        param.requires_grad = True
+
 def train(args):
     os.makedirs(args.save_dir, exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    import json
+    print(json.dumps(args.__dict__, indent=4))
 
     if args.wandb:
         wandb.init(project="classification", config=args)
@@ -64,10 +83,19 @@ def train(args):
     optimizer = optim.Adam(model.parameters(),
                            lr=args.lr,
                            weight_decay=args.weight_decay)
+    
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer,mode='min',factor=0.5,patience=1,verbose=True)
 
     global_step = 0
     # evaluate(model, valid_set)
     for epoch in range(args.num_epoch):
+        if epoch < 3:
+            train_last_n_layers(model, args.last_layers)
+        else:
+            if epoch % 2 == 0:
+                train_embeddings(model)
+            else:
+                train_last_n_layers(model, args.last_layers)
         model.train()
         with tqdm(train_loader, desc="training") as pbar:
             losses = []

@@ -14,29 +14,13 @@ class Net(nn.Module):
         ##############################################################################
         self.model = AutoModel.from_pretrained(model_name)
 
-        # adapt the model to longer input
-        self.model.embeddings.position_embeddings = nn.Embedding(max_len, self.model.embeddings.position_embeddings.embedding_dim)
-        self.model.embeddings.register_buffer("position_ids", torch.arange(max_len, dtype=torch.long).unsqueeze(0))
-        self.model.embeddings.register_buffer("token_type_ids", torch.zeros(1, max_len, dtype=torch.long))
-
         self.dropout = nn.Dropout(self.model.config.hidden_dropout_prob)
 
         self.fc_logits = nn.Linear(self.model.config.hidden_size, 1)
-
-        self._freeze()
         ##############################################################################
         #                              END OF YOUR CODE                              #
         ##############################################################################
     
-    def _freeze(self):
-        for param in self.model.parameters():
-            param.requires_grad = False
-        for layer in self.model.encoder.layer[-2:]:
-            for param in layer.parameters():
-                param.requires_grad = True
-        for param in self.model.pooler.parameters():
-            param.requires_grad = True
-
     def logits(self, **kwargs):
         """
         Compute the logits for the input data.
