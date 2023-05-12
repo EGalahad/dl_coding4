@@ -12,7 +12,6 @@ class Net(nn.Module):
         ##############################################################################
         #                  TODO: You need to complete the code here                  #
         ##############################################################################
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModel.from_pretrained(model_name)
 
         # adapt the model to longer input
@@ -23,9 +22,17 @@ class Net(nn.Module):
         self.dropout = nn.Dropout(self.model.config.hidden_dropout_prob)
 
         self.fc_logits = nn.Linear(self.model.config.hidden_size, 1)
+
+        self._freeze()
         ##############################################################################
         #                              END OF YOUR CODE                              #
         ##############################################################################
+    
+    def _freeze(self):
+        for param in self.model.parameters():
+            param.requires_grad = False
+        for param in self.model.embeddings.parameters():
+            param.requires_grad = True
 
     def logits(self, **kwargs):
         """
