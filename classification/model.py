@@ -31,7 +31,10 @@ class Net(nn.Module):
     def _freeze(self):
         for param in self.model.parameters():
             param.requires_grad = False
-        for param in self.model.embeddings.parameters():
+        for layer in self.model.encoder.layer[-2:]:
+            for param in layer.parameters():
+                param.requires_grad = True
+        for param in self.model.pooler.parameters():
             param.requires_grad = True
 
     def logits(self, **kwargs):
