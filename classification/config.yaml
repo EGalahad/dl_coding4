@@ -1,0 +1,16 @@
+# config.yaml
+program: train_sweep.py
+method: bayes
+name: sweep-bert-lr
+metric:
+  goal: maximize
+  name: val_acc
+parameters:
+  batch-size: 
+    value: 4
+  lr:
+    values: [0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05]
+  num-epoch:
+    value: 1
+  gradient-accumulation-steps:
+    values: [1, 4, 8, 16, 32]
