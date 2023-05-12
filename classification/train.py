@@ -26,6 +26,7 @@ def get_args(args = None):
     # parser.add_argument("--hidden-dim", default=512, type=int)
     # parser.add_argument("--embedding-dim", default=512, type=int)
     # parser.add_argument("--num-layers", default=6, type=int)
+    parser.add_argument("--model-name", default="bert-base-chinese", type=str)
     parser.add_argument("--num-epoch", default=20, type=int)
     parser.add_argument("--save-interval", default=1, type=int)
     parser.add_argument("--save-dir", default=os.path.join(curdir, "models"))
@@ -59,7 +60,7 @@ def train(args):
                               shuffle=True)
 
     valid_set = CLSDataset(split="dev", device=device, max_len=args.max_len)
-    model = Net(args, max_len=args.max_len).to(device)
+    model = Net(args, model_name=args.model_name, max_len=args.max_len).to(device)
     optimizer = optim.Adam(model.parameters(),
                            lr=args.lr,
                            weight_decay=args.weight_decay)
