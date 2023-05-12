@@ -127,6 +127,8 @@ class CLSDataset(Dataset):
         batch = {k: v.view(batch_size, num_choices, -1) for k, v in batch.items()}
         batch["targets"] = torch.tensor([sample["label"] for sample in samples], dtype=torch.long)
         # batch["targets"]: [batch_size]
+        batch["invalid_choices_mask"] = torch.tensor([[choice == "" for choice in choice_list] for choice_list in choices], dtype=torch.bool)
+        # batch["invalid_choices_mask"]: [batch_size, num_choices]
         batch = {k: v.to(self.device) for k, v in batch.items()}
         return batch
         ##############################################################################

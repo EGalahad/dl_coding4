@@ -41,6 +41,8 @@ class Net(nn.Module):
         # ##############################################################################
         #                  TODO: You need to complete the code here                  #
         ##############################################################################
+        invalid_choices_mask = kwargs.pop("invalid_choices_mask")
+        # invalid_choices_mask: [batch_size, num_choices]
         batch_size = kwargs["input_ids"].shape[0]
         num_choices = kwargs["input_ids"].shape[1]
         kwargs = {k: v.view(batch_size * num_choices, -1) for k, v in kwargs.items()}
@@ -48,6 +50,7 @@ class Net(nn.Module):
         pooler_output = self.dropout(pooler_output)
         # pooler_output: [batch_size * num_choices, hidden_size]
         logits = self.fc_logits(pooler_output).view(batch_size, num_choices)
+        logits.masked_fill_(invalid_choices_mask, -1e9)
         return logits
         ##############################################################################
         #                              END OF YOUR CODE                              #
