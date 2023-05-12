@@ -108,7 +108,7 @@ class CLSDataset(Dataset):
         num_choices = self.num_choices
 
         first_sentences = [[content] * num_choices for content in contents]
-        second_sentences = [[question + '[SEP]' + choice for choice in choices[i]] for i, question in enumerate(questions)]
+        second_sentences = [['<问>：' + question + '||<选项>：' + choice for choice in choices[i]] for i, question in enumerate(questions)]
 
         first_sentences = sum(first_sentences, [])
         second_sentences = sum(second_sentences, [])
